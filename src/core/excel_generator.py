@@ -4,6 +4,9 @@ Incluye sedes, incidencias, headers corregidos y máximo 4 pares entrada/salida
 RESTA 3 HORAS para convertir UTC a horario de Argentina
 Colores informativos: Solo "Sí" destacados, resto en blanco
 NUEVA FUNCIONALIDAD: Columna de Permisos Pedidos Aprobados
+CORREGIDO: Columna de permisos con text wrapping y ancho ajustado
+AGREGADO: Columna para Ausencias
+ELIMINADO: Horas Nocturnas
 """
 
 import os
@@ -29,6 +32,7 @@ class ExcelReportGeneratorDetailed:
         self.green_fill = PatternFill(start_color="E8F5E8", end_color="E8F5E8", fill_type="solid")
         self.red_fill = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")
         self.light_blue_fill = PatternFill(start_color="E3F2FD", end_color="E3F2FD", fill_type="solid")
+        self.orange_fill = PatternFill(start_color="FFE0B2", end_color="FFE0B2", fill_type="solid")  # NUEVO: Color naranja para ausencias
         
         self.thin_border = Border(
             left=Side(style='thin'),
@@ -177,49 +181,47 @@ class ExcelReportGeneratorDetailed:
             filepath = os.path.join(self.output_dir, output_filename)
             wb.save(filepath)
             
-            print(f"Reporte Excel detallado generado: {filepath}")
             return filepath
             
         except Exception as e:
             print(f"Error generando reporte Excel detallado: {str(e)}")
-            raise e
-    
+            raise
+
     def _create_detailed_sheet(self, wb: Workbook, processed_data: Dict, 
-                             start_date: str, end_date: str, max_pairs: int):
-        """Crea la hoja con columnas detalladas de fichadas - VERSIÓN FINAL CON PERMISOS"""
+                              start_date: str, end_date: str, max_pairs: int):
+        """Crea la hoja con columnas detalladas de fichadas - VERSIÓN FINAL"""
         ws = wb.create_sheet("Fichadas Detalladas")
         
         # Título
-        ws['A1'] = f"DETALLE DE FICHADAS - COLUMNAS EXPANDIDAS CON PERMISOS"
-        ws['A2'] = f"Período: {start_date} al {end_date}"
-        ws['A3'] = f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        ws.cell(row=1, column=1, value=f"Reporte de Asistencia Detallado - {start_date} a {end_date}")
+        ws.cell(row=1, column=1).font = Font(size=16, bold=True)
         
-        # Aplicar estilo al título
-        for row in range(1, 4):
-            ws[f'A{row}'].font = Font(bold=True, size=12)
+        # Información adicional
+        ws.cell(row=2, column=1, value=f"Fecha generación: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        ws.cell(row=3, column=1, value=f"Empleados procesados: {len(processed_data)}")
         
-        # Construir headers dinámicamente - VERSIÓN FINAL CON PERMISOS
+        # Headers base - AGREGANDO COLUMNA DE AUSENCIAS
         base_headers = [
-            'ID Empleado', 'Nombre', 'Apellido', 'Fecha', 'Día',
-            'Turno Programado', 'Permisos Pedidos Aprobados', 'Tardanza', 'Trabajo Menos'
+            'ID Empleado', 'Nombre', 'Apellido', 'Fecha', 'Día Semana', 
+            'Turno Programado', 'Permisos Pedidos Aprobados', 'Ausencia', 'Tardanza', 'Trabajo Insuficiente'
         ]
         
-        # Headers dinámicos para pares entrada/salida
+        # Headers de entries (máximo 4 pares)
         entry_headers = []
         for i in range(1, max_pairs + 1):
             entry_headers.extend([
-                f'Sede Ingreso {i}',
-                f'Hora de Ingreso {i}',
-                f'Comentario Ingreso {i}',
+                f'Sede Entrada {i}',
+                f'Hora de Entrada {i}',
+                f'Comentario Entrada {i}',
                 f'Sede Salida {i}',
                 f'Hora de Salida {i}',
                 f'Comentario Salida {i}'
             ])
         
-        # Headers de resumen
+        # Headers de resumen - ELIMINADO 'Horas Nocturnas'
         summary_headers = [
             'Horas Trabajadas', 'Horas Regulares', 'Horas Extra 50%', 
-            'Horas Extra 100%', 'Horas Nocturnas', 'Horas Pendientes',
+            'Horas Extra 100%', 'Horas Pendientes',
             'Es Feriado', 'Nombre Feriado', 'Tiene Licencia', 
             'Tipo Licencia', 'Observaciones'
         ]
@@ -235,12 +237,13 @@ class ExcelReportGeneratorDetailed:
             cell.border = self.thin_border
             cell.alignment = self.center_alignment
         
-        # Calcular índices de columnas importantes
+        # Calcular índices de columnas importantes - ACTUALIZADO PARA NUEVA COLUMNA
         COL_TURNO = 6
-        COL_PERMISOS = 7  # NUEVA COLUMNA
-        COL_TARDANZA = 8
-        COL_TRABAJO_MENOS = 9
-        COL_ENTRIES_START = 10  # Ajustado por la nueva columna
+        COL_PERMISOS = 7
+        COL_AUSENCIA = 8  # NUEVA COLUMNA DE AUSENCIAS
+        COL_TARDANZA = 9  # Movido una posición
+        COL_TRABAJO_MENOS = 10  # Movido una posición
+        COL_ENTRIES_START = 11  # Ajustado por la nueva columna
         COL_SUMMARY_START = COL_ENTRIES_START + (max_pairs * 6)
         
         # Escribir datos
@@ -255,11 +258,12 @@ class ExcelReportGeneratorDetailed:
                 # Procesar incidencias
                 has_late = 'LATE' in incidences
                 has_underworked = 'UNDERWORKED' in incidences
+                has_absence = daily_record.get('has_absence', False)  # DETECTAR AUSENCIAS
                 
                 # Obtener permiso para esta fila
                 permission_text = daily_record.get('permission_request', '')
                 
-                # Datos base CON PERMISOS
+                # Datos base CON PERMISOS Y AUSENCIAS
                 base_data = [
                     employee_info.get('employeeInternalId', ''),
                     employee_info.get('firstName', ''),
@@ -267,7 +271,8 @@ class ExcelReportGeneratorDetailed:
                     daily_record['date'],
                     daily_record['day_of_week'],
                     self._format_turno_from_timeslots(daily_record.get('time_slots', [])),
-                    permission_text,  # NUEVA COLUMNA DE PERMISOS
+                    permission_text,  # COLUMNA DE PERMISOS
+                    'Sí' if has_absence else 'No',  # NUEVA COLUMNA DE AUSENCIAS
                     'Sí' if has_late else 'No',
                     'Sí' if has_underworked else 'No'
                 ]
@@ -292,12 +297,14 @@ class ExcelReportGeneratorDetailed:
                     else:
                         entry_columns_data.extend(['', '', '', '', '', ''])
                 
-                # Datos de resumen
+                # Datos de resumen - ELIMINADO daily_record['night_hours']
                 observations = []
                 if daily_record['is_holiday']:
                     observations.append(f"Feriado: {daily_record['holiday_name'] or 'N/A'}")
                 if daily_record['has_time_off']:
                     observations.append(f"Licencia: {daily_record['time_off_name'] or 'N/A'}")
+                if has_absence:  # AGREGAR AUSENCIA A OBSERVACIONES
+                    observations.append("Ausencia")
                 if daily_record['pending_hours'] > 0:
                     observations.append(f"{self._format_hours_exact(daily_record['pending_hours'])} pendientes")
                 if has_late:
@@ -312,7 +319,7 @@ class ExcelReportGeneratorDetailed:
                     self._format_hours_exact(daily_record['regular_hours']),
                     self._format_hours_exact(daily_record['extra_hours_50']),
                     self._format_hours_exact(daily_record['extra_hours_100']),
-                    self._format_hours_exact(daily_record['night_hours']),
+                    # ELIMINADO: self._format_hours_exact(daily_record['night_hours']),
                     self._format_hours_exact(daily_record['pending_hours']),
                     'Sí' if daily_record['is_holiday'] else 'No',
                     daily_record['holiday_name'] or '',
@@ -333,11 +340,17 @@ class ExcelReportGeneratorDetailed:
                     if col == COL_TURNO:
                         cell.fill = self.white_fill  # Blanco
                     elif col == COL_PERMISOS:
-                        # Color celeste para la columna de permisos
+                        # Color celeste para la columna de permisos CON TEXT WRAPPING
                         if value and value.strip():
                             cell.fill = self.light_blue_fill  # Celeste si hay permiso
+                            cell.alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)  # TEXT WRAPPING
                         else:
                             cell.fill = self.white_fill  # Blanco si no hay permiso
+                    elif col == COL_AUSENCIA:  # NUEVA COLUMNA DE AUSENCIAS
+                        if has_absence and value == 'Sí':
+                            cell.fill = self.orange_fill  # Naranja para ausencias
+                        else:
+                            cell.fill = self.white_fill  # Blanco si no hay ausencia
                     elif col == COL_TARDANZA:
                         if has_late and value == 'Sí':
                             cell.fill = self.red_fill  # Rojo para Sí
@@ -349,14 +362,14 @@ class ExcelReportGeneratorDetailed:
                         # Todas las columnas de entries en blanco
                         cell.fill = self.white_fill
                     elif col >= COL_SUMMARY_START:
-                        # Columnas de resumen
+                        # Columnas de resumen - AJUSTADO POR ELIMINACIÓN DE HORAS NOCTURNAS
                         summary_col_offset = col - COL_SUMMARY_START
-                        if summary_col_offset == 6:  # Es Feriado
+                        if summary_col_offset == 5:  # Es Feriado (antes era 6, ahora 5)
                             if value == 'Sí':
                                 cell.fill = self.green_fill  # Verde para Sí
                             else:
                                 cell.fill = self.white_fill  # Blanco para No
-                        elif summary_col_offset == 8:  # Tiene Licencia
+                        elif summary_col_offset == 7:  # Tiene Licencia (antes era 8, ahora 7)
                             if value == 'Sí':
                                 cell.fill = self.green_fill  # Verde para Sí
                             else:
@@ -367,13 +380,13 @@ class ExcelReportGeneratorDetailed:
                 
                 row += 1
         
-        # Ajustar ancho de columnas
+        # Ajustar ancho de columnas - ACTUALIZADO PARA NUEVA COLUMNA
         for col in range(1, len(all_headers) + 1):
             if col <= 6:  # Columnas base hasta turno programado
                 ws.column_dimensions[get_column_letter(col)].width = 14
-            elif col == COL_PERMISOS:  # Columna de permisos más ancha
-                ws.column_dimensions[get_column_letter(col)].width = 25
-            elif col in [COL_TARDANZA, COL_TRABAJO_MENOS]:  # Tardanza y trabajo menos
+            elif col == COL_PERMISOS:  # Columna de permisos MÁS ANCHA
+                ws.column_dimensions[get_column_letter(col)].width = 60  # AUMENTADO DE 25 A 60
+            elif col in [COL_AUSENCIA, COL_TARDANZA, COL_TRABAJO_MENOS]:  # Ausencia, tardanza y trabajo menos
                 ws.column_dimensions[get_column_letter(col)].width = 14
             elif COL_ENTRIES_START <= col < COL_SUMMARY_START:
                 # Columnas de entries

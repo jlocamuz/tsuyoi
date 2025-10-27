@@ -167,22 +167,29 @@ class DataProcessorEnhanced:
             except Exception as fallback_error:
                 print(f"❌ Fallback también falló: {str(fallback_error)}")
                 return []
-    
     def format_permission_time_range(self, permission_data: Dict) -> str:
         """
-        Formatea el rango horario del permiso
+        Formatea el rango del permiso - puede ser horario (mismo día) o de días (rango)
         """
         try:
-            hh_inicio = permission_data.get('hh_inicio', '')
-            mm_inicio = permission_data.get('mm_inicio', '')
-            hh_fin = permission_data.get('hh_fin', '')
-            mm_fin = permission_data.get('mm_fin', '')
+            # Verificar si es rango de días
+            dd = permission_data.get('dd', '')
+            mm = permission_data.get('mm', '')
+            dia2 = permission_data.get('dia2', '')
+            mes2 = permission_data.get('mes2', '')
+            form = permission_data.get('TipoSolicitud', '')
+            hora = permission_data.get('Hora', '')
+            minutos = permission_data.get('Minutos', '')
+            incidencia = permission_data.get('incidencia', '')
             
-            if all([hh_inicio, mm_inicio, hh_fin, mm_fin]):
-                return f"desde {hh_inicio}:{mm_inicio} hasta {hh_fin}:{mm_fin} - pedido x permiso"
-            else:
-                return "pedido x permiso"
-                
+            # Si tiene dia2 y mes2, es un rango de días
+            if dd and mm and dia2 and mes2:
+                return f"desde {dd}/{mm} hasta {dia2}/{mes2} - {form}"
+            
+            # Si no, verificar si es rango horario (mismo día)
+            
+            # Fallback...
+            return f"{hora}:{minutos} - {incidencia} - {form}"
         except Exception:
             return "pedido x permiso"
     
@@ -355,7 +362,7 @@ class DataProcessorEnhanced:
         
         for daily_record in employee_data['daily_data']:
             date_str = daily_record['date']  # YYYY-MM-DD
-            print(f"\n📅 Buscando permiso para fecha: {date_str}")
+            #print(f"\n📅 Buscando permiso para fecha: {date_str}")
             
             # Buscar permiso para esta fecha y empleado
             permission = self._find_permission_for_date_and_employee(
@@ -366,7 +373,7 @@ class DataProcessorEnhanced:
                 permission_text = self.format_permission_time_range(permission)
                 daily_record['permission_request'] = permission_text
                 permissions_found += 1
-                print(f"✅ PERMISO ENCONTRADO para {employee_id} el {date_str}: {permission_text}")
+                #print(f"✅ PERMISO ENCONTRADO para {employee_id} el {date_str}: {permission_text}")
             else:
                 daily_record['permission_request'] = ""
                 print(f"❌ Sin permiso para {employee_id} el {date_str}")
@@ -374,62 +381,53 @@ class DataProcessorEnhanced:
         print(f"\n📊 RESUMEN: {permissions_found} permisos encontrados para {employee_id}")
     
     def _find_permission_for_date_and_employee(self, permissions_data: List[Dict], 
-                                             employee_id: str, date_str: str) -> Optional[Dict]:
+                                            employee_id: str, date_str: str) -> Optional[Dict]:
         """
-        Busca un permiso específico para un empleado y fecha con debugging detallado
+        Busca un permiso específico para un empleado y fecha - INCLUYE RANGOS DE DÍAS
         """
         try:
-            # Convertir date_str de YYYY-MM-DD a componentes
+            from datetime import datetime
+            
+            # Convertir date_str a objeto datetime
+            target_date = datetime.strptime(date_str, '%Y-%m-%d')
             year, month, day = date_str.split('-')
-            print(f"🔎 Buscando: employeeId={employee_id}, año={year}, mes={month}, día={day}")
             
-            # Debug: mostrar algunos permisos para entender estructura (solo la primera vez)
-            if len(permissions_data) > 0 and not hasattr(self, '_permissions_structure_shown'):
-                print(f"\n🔎 EJEMPLO de estructura de permisos:")
-                for i, perm in enumerate(permissions_data[:2]):
-                    print(f"  Permiso {i+1}: {perm}")
-                self._permissions_structure_shown = True
-            
-            matches_found = []
-            
-            for i, permission in enumerate(permissions_data):
-                # Obtener valores del permiso
+            for permission in permissions_data:
                 perm_employee_id = permission.get('employeeInternalId')
-                perm_year = str(permission.get('yyyy', ''))
-                perm_month = str(permission.get('mm', '')).zfill(2)  # Asegurar 2 dígitos
-                perm_day = str(permission.get('dd', '')).zfill(2)    # Asegurar 2 dígitos
                 
-                # Debug cada comparación
-                employee_match = perm_employee_id == employee_id
-                year_match = perm_year == year
-                month_match = perm_month == month
-                day_match = perm_day == day
-                
-                if employee_match:
-                    print(f"    👤 Empleado match en posición {i}: {perm_employee_id}")
-                    if year_match and month_match and day_match:
-                        print(f"    📅 Fecha también match: {perm_year}-{perm_month}-{perm_day}")
-                        matches_found.append((i, permission))
-                    else:
-                        print(f"    📅 Fecha NO match: {perm_year}-{perm_month}-{perm_day} vs {year}-{month}-{day}")
-                
-                # Si encontramos match completo
-                if employee_match and year_match and month_match and day_match:
-                    print(f"🎯 MATCH COMPLETO encontrado en posición {i}:")
-                    print(f"    Permiso: {permission}")
-                    return permission
-            
-            if matches_found:
-                print(f"⚠️ Encontré {len(matches_found)} empleado matches pero sin fecha exacta")
-            else:
-                print(f"❌ No encontré ningún match para empleado {employee_id}")
+                # Solo buscar permisos del empleado correcto
+                if perm_employee_id != employee_id:
+                    continue
                     
-            return None
+                # Verificar si es rango de días
+                dd = permission.get('dd', '')
+                mm = permission.get('mm', '')
+                dia2 = permission.get('dia2', '')
+                mes2 = permission.get('mes2', '')
+                
+                if dd and mm and dia2 and mes2:
+                    # Es un rango de días - verificar si target_date está dentro
+                    try:
+                        start_date = datetime(2025, int(mm), int(dd))
+                        end_date = datetime(2025, int(mes2), int(dia2))
+                        
+                        if start_date <= target_date <= end_date:
+                            print(f"🎯 RANGO MATCH: {date_str} está en rango {dd}/{mm} - {dia2}/{mes2}")
+                            return permission
+                    except:
+                        continue
+                else:
+                    # Es un día específico - lógica original
+                    perm_month = str(mm).zfill(2)
+                    perm_day = str(dd).zfill(2)
+                    
+                    if perm_month == month and perm_day == day:
+                        print(f"🎯 DÍA ESPECÍFICO MATCH: {date_str}")
+                        return permission
             
+            return None
         except Exception as e:
             print(f"❌ Error buscando permiso: {str(e)}")
-            import traceback
-            print(f"❌ Stack trace: {traceback.format_exc()}")
             return None
     
     def _is_cache_valid(self) -> bool:
